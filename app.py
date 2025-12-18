@@ -6,6 +6,8 @@ from datetime import datetime, date
 import bcrypt
 import pandas as pd
 from streamlit_drawable_canvas import st_canvas
+from PIL import Image
+import io
 import yagmail
 
 # ===============================
@@ -54,7 +56,7 @@ def init_db():
         motorista TEXT,
         empresa_id INTEGER,
         foto BLOB,
-        assinatura TEXT
+        assinatura BLOB
     )""")
 
     cur.execute("""CREATE TABLE IF NOT EXISTS login_logs (
@@ -69,7 +71,7 @@ def init_db():
     cur.execute("SELECT id FROM empresas WHERE nome=?", ("Empresa Demo",))
     empresa_id = cur.fetchone()[0]
 
-    # Admin default
+    # Admin padrão
     pwd = bcrypt.hashpw("Interadmin".encode(), bcrypt.gensalt())
     cur.execute("""INSERT OR IGNORE INTO utilizadores
         (username, password, empresa_id, role)
@@ -78,7 +80,6 @@ def init_db():
     con.commit()
     con.close()
 
-# Inicializa DB apenas uma vez
 if not os.path.exists(DB_FLAG):
     init_db()
     open(DB_FLAG, "w").close()
@@ -95,11 +96,9 @@ if "login" not in st.session_state:
 if not st.session_state.login:
     tab1, tab2 = st.tabs(["Login", "Registo"])
 
-    # ---------- LOGIN ----------
     with tab1:
         u = st.text_input("Utilizador", key="login_username")
         p = st.text_input("Password", type="password", key="login_password")
-
         if st.button("Entrar", key="login_button"):
             con = get_db()
             cur = con.cursor()
@@ -126,12 +125,10 @@ if not st.session_state.login:
                 con.close()
                 st.error("Credenciais inválidas")
 
-    # ---------- REGISTO ----------
     with tab2:
         nu = st.text_input("Novo utilizador", key="register_username")
         np = st.text_input("Password", type="password", key="register_password")
         ncp = st.text_input("Confirmar Password", type="password", key="register_confirm")
-
         if st.button("Registar", key="register_button"):
             nu = nu.strip().lower()
             if not nu:
@@ -176,7 +173,6 @@ if menu == "Administração" and is_admin:
     st.subheader("Criar Motorista")
     nu = st.text_input("Novo utilizador", key="admin_new_user")
     np = st.text_input("Password", type="password", key="admin_new_pass")
-
     if st.button("Criar Motorista", key="admin_create_button"):
         if nu and np:
             nu = nu.strip().lower()
@@ -203,14 +199,16 @@ if menu == "Nova Entrega":
     email_cliente = st.text_input("Email do Cliente", key="entrega_email")
     estado = st.selectbox("Estado", ["Entregue", "Não Entregue"], key="entrega_estado")
     nota = st.text_area("Nota", key="entrega_nota")
-
     foto = st.camera_input("Foto da entrega", key="entrega_foto")
     assinatura = st_canvas(height=150, width=300, drawing_mode="freedraw", key="entrega_assinatura")
-
     if st.button("Guardar Entrega", key="entrega_save"):
         foto_bytes = foto.getvalue() if foto else None
-        assinatura_json = json.dumps(assinatura.json_data) if assinatura and assinatura.json_data else None
-
+        assinatura_bytes = None
+        if assinatura and assinatura.json_data:
+            img = Image.new("RGB", (300, 150), "white")
+            assinatura_bytes = io.BytesIO()
+            img.save(assinatura_bytes, format="PNG")
+            assinatura_bytes = assinatura_bytes.getvalue()
         con = get_db()
         cur = con.cursor()
         cur.execute("""
@@ -227,16 +225,16 @@ if menu == "Nova Entrega":
             st.session_state.utilizador,
             st.session_state.empresa_id,
             foto_bytes,
-            assinatura_json
+            assinatura_bytes
         ))
         con.commit()
         con.close()
         st.success("Entrega registada")
 
-        # ENVIO EMAIL
+        # Envio de email com anexos
         try:
             yag = yagmail.SMTP('YOUR_EMAIL@gmail.com', 'YOUR_APP_PASSWORD')
-            subject = f"Entrega Realizada para {cliente}"
+            subject = f"Entrega Realizada: {cliente}"
             body = f"""
             <h2>Entrega Realizada</h2>
             <p>Cliente: {cliente}</p>
@@ -246,10 +244,15 @@ if menu == "Nova Entrega":
             <p>Motorista: {st.session_state.utilizador}</p>
             <p>Data/Hora: {datetime.now().isoformat()}</p>
             """
-            yag.send(to=email_cliente, subject=subject, contents=body)
+            attachments = []
+            if foto_bytes:
+                attachments.append(("foto.png", foto_bytes))
+            if assinatura_bytes:
+                attachments.append(("assinatura.png", assinatura_bytes))
+            yag.send(to=email_cliente, subject=subject, contents=body, attachments=attachments)
             st.info("Email enviado ao cliente")
-        except:
-            st.warning("Falha ao enviar email. Configura as credenciais.")
+        except Exception as e:
+            st.warning(f"Falha ao enviar email: {e}")
 
 # ===============================
 # MINHAS ENTREGAS
@@ -265,11 +268,9 @@ if menu == "Minhas Entregas":
     """, (st.session_state.utilizador, st.session_state.empresa_id))
     dados = cur.fetchall()
     con.close()
-
     if dados:
         df = pd.DataFrame(dados, columns=["ID","Cliente","Morada","Estado","Nota","Data"])
         st.dataframe(df)
-
         if st.button("Fechar Todas as Entregas", key="fechar_minhas"):
             con = get_db()
             cur = con.cursor()
@@ -289,11 +290,8 @@ if menu == "Dashboard":
     st.subheader("Dashboard de Entregas")
     con = get_db()
     cur = con.cursor()
-    cur.execute("""
-    SELECT id, cliente, morada, estado, nota, motorista, data
-    FROM entregas
-    WHERE empresa_id=?
-    """, (st.session_state.empresa_id,))
+    query = "SELECT id, cliente, morada, estado, nota, motorista, data FROM entregas WHERE empresa_id=?"
+    cur.execute(query, (st.session_state.empresa_id,))
     dados = cur.fetchall()
     con.close()
     if dados:
@@ -317,11 +315,9 @@ if menu == "Fechar Dia":
     """, (f"{hoje}%", st.session_state.empresa_id))
     dados = cur.fetchall()
     con.close()
-
     if dados:
         df = pd.DataFrame(dados, columns=["ID","Cliente","Morada","Estado","Nota","Motorista"])
         st.dataframe(df)
-
         if st.button("Fechar todas as entregas do dia", key="fechar_dia"):
             con = get_db()
             cur = con.cursor()
@@ -331,7 +327,6 @@ if menu == "Fechar Dia":
             con.close()
             st.success("Todas as entregas do dia foram fechadas")
             st.experimental_rerun()
-
         if st.button("Exportar Excel", key="export_excel"):
             file_path = os.path.join(BASE_DIR, "relatorio.xlsx")
             df.to_excel(file_path, index=False)
