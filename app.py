@@ -6,7 +6,6 @@ import bcrypt
 import pandas as pd
 from streamlit_drawable_canvas import st_canvas
 import io
-from PIL import Image
 
 # ===============================
 # CONFIGURAÇÃO
@@ -38,7 +37,7 @@ def init_db():
         password BLOB,
         empresa_id INTEGER,
         role TEXT,
-        telefone TEXT DEFAULT ''
+        telefone TEXT
     )""")
     cur.execute("""CREATE TABLE IF NOT EXISTS entregas (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -65,11 +64,10 @@ def init_db():
     cur.execute("SELECT id FROM empresas WHERE nome=?", ("Empresa Demo",))
     empresa_id = cur.fetchone()[0]
     # Admin padrão
-    cur.execute("SELECT id FROM utilizadores WHERE username='interadmin00'")
-    if not cur.fetchone():
-        pwd = bcrypt.hashpw("Interadmin".encode(), bcrypt.gensalt())
-        cur.execute("""INSERT INTO utilizadores (username, password, empresa_id, role, telefone)
-                       VALUES (?, ?, ?, ?, ?)""", ("interadmin00", pwd, empresa_id, "admin", ""))
+    pwd = bcrypt.hashpw("Interadmin".encode(), bcrypt.gensalt())
+    cur.execute("""INSERT OR IGNORE INTO utilizadores
+        (username, password, empresa_id, role, telefone)
+        VALUES (?, ?, ?, ?, ?)""", ("interadmin00", pwd, empresa_id, "admin", ""))
     con.commit()
     con.close()
 
@@ -158,125 +156,114 @@ menu = st.sidebar.selectbox(
 )
 
 # ===============================
-# FUNÇÕES AUXILIARES
-# ===============================
-def notificar_entregas_pendentes():
-    con = get_db()
-    cur = con.cursor()
-    cur.execute("SELECT username, telefone FROM utilizadores WHERE role='entregador' AND empresa_id=?", (st.session_state.empresa_id,))
-    entregadores = cur.fetchall()
-    for e in entregadores:
-        cur.execute("SELECT COUNT(*) FROM entregas WHERE entregador=? AND estado!='Entregue' AND empresa_id=?", (e[0], st.session_state.empresa_id))
-        pendentes = cur.fetchone()[0]
-        if pendentes > 0:
-            print(f"Notificação: {e[0]} ({e[1]}) tem {pendentes} entregas pendentes")
-    con.close()
-
-def salvar_entrega(cliente, morada, email_cliente, estado, nota, entregador, codigo_rastreamento, foto, assinatura):
-    assinatura_bytes = None
-    if assinatura and assinatura.image_data is not None:
-        im = Image.fromarray(assinatura.image_data.astype('uint8'))
-        buf = io.BytesIO()
-        im.save(buf, format="PNG")
-        assinatura_bytes = buf.getvalue()
-    foto_bytes = foto.read() if foto else None
-
-    con = get_db()
-    cur = con.cursor()
-    cur.execute("""INSERT INTO entregas
-        (cliente,morada,email,estado,nota,data,entregador,codigo_rastreamento,empresa_id,foto,assinatura)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?)""", (
-        cliente, morada, email_cliente, estado, nota,
-        datetime.now().isoformat(), entregador, codigo_rastreamento,
-        st.session_state.empresa_id, foto_bytes, assinatura_bytes
-    ))
-    con.commit()
-    con.close()
-    st.success("Entrega guardada")
-    notificar_entregas_pendentes()
-
-# ===============================
 # NOVA ENTREGA
 # ===============================
 if menu == "Nova Entrega":
-    st.subheader("Nova Entrega")
+    con = get_db()
+    cur = con.cursor()
+    cur.execute("SELECT username FROM utilizadores WHERE role='entregador' AND empresa_id=?", (st.session_state.empresa_id,))
+    entregadores = [x[0] for x in cur.fetchall()]
+    con.close()
+
     cliente = st.text_input("Cliente")
     morada = st.text_input("Morada")
     email_cliente = st.text_input("Email do Cliente")
     estado = st.selectbox("Estado", ["Entregue", "Não Entregue"])
     nota = st.text_area("Nota")
-    entregador = st.selectbox("Entregador", [u[0] for u in get_db().cursor().execute("SELECT username FROM utilizadores WHERE role='entregador' AND empresa_id=?", (st.session_state.empresa_id,)).fetchall()])
-    codigo_rastreamento = st.text_input("Código de Rastreamento (opcional)")
+    entregador = st.selectbox("Entregador", entregadores)
+    codigo_rastreio = st.text_input("Código de rastreio (Packet Tracer UPS)")
     foto = st.file_uploader("Foto da entrega (opcional)", type=["png","jpg","jpeg"])
     assinatura = st_canvas(height=150, width=300, drawing_mode="freedraw")
+
     if st.button("Guardar Entrega"):
-        salvar_entrega(cliente, morada, email_cliente, estado, nota, entregador, codigo_rastreamento, foto, assinatura)
+        foto_bytes = foto.read() if foto else None
+        assinatura_bytes = assinatura.image_data.tobytes() if assinatura.image_data is not None else None
+        con = get_db()
+        cur = con.cursor()
+        cur.execute("""INSERT INTO entregas
+            (cliente,morada,email,estado,nota,data,entregador,codigo_rastreamento,empresa_id,foto,assinatura)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?)""", (
+            cliente, morada, email_cliente, estado, nota, datetime.now().isoformat(),
+            entregador, codigo_rastreio, st.session_state.empresa_id,
+            foto_bytes, assinatura_bytes
+        ))
+        con.commit()
+        con.close()
+        st.success("Entrega guardada com sucesso!")
 
 # ===============================
 # MINHAS ENTREGAS
 # ===============================
 if menu == "Minhas Entregas":
-    st.subheader("Minhas Entregas")
     con = get_db()
-    df = pd.read_sql_query("SELECT * FROM entregas WHERE entregador=? AND empresa_id=?", con, params=(st.session_state.utilizador, st.session_state.empresa_id))
+    df_entregas = pd.read_sql_query(
+        "SELECT id, cliente, morada, estado, nota, data FROM entregas WHERE entregador=? AND empresa_id=?",
+        con,
+        params=(st.session_state.utilizador, st.session_state.empresa_id)
+    )
     con.close()
-    st.dataframe(df)
+    st.dataframe(df_entregas)
 
 # ===============================
 # DASHBOARD
 # ===============================
-if menu == "Dashboard" and is_admin:
-    st.subheader("Dashboard de Entregadores")
+if menu == "Dashboard":
     con = get_db()
-    cur = con.cursor()
-    cur.execute("SELECT username FROM utilizadores WHERE role='entregador' AND empresa_id=?", (st.session_state.empresa_id,))
-    entregadores = [e[0] for e in cur.fetchall()]
-    for e in entregadores:
-        cur.execute("SELECT COUNT(*) FROM entregas WHERE entregador=? AND estado='Entregue' AND empresa_id=?", (e, st.session_state.empresa_id))
-        realizadas = cur.fetchone()[0]
-        cur.execute("SELECT COUNT(*) FROM entregas WHERE entregador=? AND estado!='Entregue' AND empresa_id=?", (e, st.session_state.empresa_id))
+    df_entregadores = pd.read_sql_query(
+        "SELECT username, telefone FROM utilizadores WHERE role='entregador' AND empresa_id=?",
+        con,
+        params=(st.session_state.empresa_id,)
+    )
+    dashboard_data = []
+    for idx, row in df_entregadores.iterrows():
+        cur = con.cursor()
+        cur.execute("SELECT COUNT(*) FROM entregas WHERE entregador=? AND estado='Entregue' AND empresa_id=?", (row['username'], st.session_state.empresa_id))
+        entregues = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) FROM entregas WHERE entregador=? AND estado!='Entregue' AND empresa_id=?", (row['username'], st.session_state.empresa_id))
         pendentes = cur.fetchone()[0]
-        st.write(f"Entregador: {e} | Entregas Realizadas: {realizadas} | Pendentes: {pendentes}")
+        dashboard_data.append({"Entregador": row['username'], "Telefone": row['telefone'], "Entregues": entregues, "Pendentes": pendentes})
+    df_dashboard = pd.DataFrame(dashboard_data)
     con.close()
+    st.subheader("Dashboard de Entregadores")
+    st.dataframe(df_dashboard)
 
 # ===============================
 # FECHAR DIA
 # ===============================
 if menu == "Fechar Dia":
-    st.subheader("Fechar Dia")
     hoje = date.today().isoformat()
     con = get_db()
-    df = pd.read_sql_query("SELECT * FROM entregas WHERE date(data)=? AND empresa_id=?", con, params=(hoje, st.session_state.empresa_id))
+    df_dia = pd.read_sql_query(
+        "SELECT cliente, morada, estado, nota, entregador FROM entregas WHERE data LIKE ? AND empresa_id=?",
+        con,
+        params=(f"{hoje}%", st.session_state.empresa_id)
+    )
     con.close()
+    st.dataframe(df_dia)
     if st.button("Exportar Excel"):
-        df.to_excel("relatorio.xlsx", index=False)
-        with open("relatorio.xlsx", "rb") as f:
-            st.download_button("Download Excel", f, file_name="relatorio.xlsx")
+        df_dia.to_excel("relatorio_dia.xlsx", index=False)
+        st.success("Relatório exportado!")
 
 # ===============================
 # ADMINISTRAÇÃO
 # ===============================
 if menu == "Administração" and is_admin:
-    st.subheader("Administração")
-    # Criar Entregador
-    st.write("Criar Entregador")
-    nu = st.text_input("Nome de utilizador (entregador)", key="admin_nu")
-    np = st.text_input("Password", type="password", key="admin_np")
-    telefone = st.text_input("Contacto telefónico", key="admin_telefone")
-    if st.button("Criar Entregador", key="admin_button"):
-        con = get_db()
-        cur = con.cursor()
-        cur.execute("SELECT id FROM utilizadores WHERE username=?", (nu,))
-        if cur.fetchone():
-            st.error("Username já existe")
-        else:
-            cur.execute("INSERT INTO utilizadores (username,password,empresa_id,role,telefone) VALUES (?,?,?,?,?)", (nu,bcrypt.hashpw(np.encode(),bcrypt.gensalt()),st.session_state.empresa_id,"entregador",telefone))
-            con.commit()
-            con.close()
-            st.success("Entregador criado")
-    # Listar Entregadores
-    st.write("Entregadores Registrados")
+    st.subheader("Gestão de Entregadores")
     con = get_db()
-    df_entregadores = pd.read_sql_query("SELECT username, telefone FROM utilizadores WHERE role='entregador' AND empresa_id=?", con, params=(st.session_state.empresa_id,))
-    con.close()
+    df_entregadores = pd.read_sql_query(
+        "SELECT id, username, telefone FROM utilizadores WHERE role='entregador' AND empresa_id=?",
+        con,
+        params=(st.session_state.empresa_id,)
+    )
     st.dataframe(df_entregadores)
+    new_entregador = st.text_input("Novo Entregador")
+    new_pass = st.text_input("Password", type="password")
+    new_telefone = st.text_input("Telefone")
+    if st.button("Adicionar Entregador"):
+        pwd = bcrypt.hashpw(new_pass.encode(), bcrypt.gensalt())
+        cur = con.cursor()
+        cur.execute("INSERT INTO utilizadores (username,password,empresa_id,role,telefone) VALUES (?,?,?,?,?)",
+                    (new_entregador.lower(), pwd, st.session_state.empresa_id, "entregador", new_telefone))
+        con.commit()
+        st.success("Entregador adicionado!")
+    st.stop()
