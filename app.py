@@ -1,40 +1,51 @@
 import sqlite3
 import pandas as pd
+import logging
 
-def connect_to_db(db_name):
+# Configure logging at the DEBUG level
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# Function to connect to SQLite database
+def connect_to_database(db_name):
+    logging.debug(f"Attempting to connect to the database: {db_name}")
     try:
-        return sqlite3.connect(db_name)
+        conn = sqlite3.connect(db_name)
+        logging.debug("Connection to database successful.")
+        return conn
     except sqlite3.Error as e:
-        print(f"An error occurred: {e}")
+        logging.error(f"SQLite error occurred: {e}")
         raise
 
-def load_data_frame(conn, query):
+# Function to execute a query and return data as a pandas DataFrame
+def execute_query(conn, query):
+    logging.debug(f"Preparing to execute query: {query}")
     try:
-        return pd.read_sql_query(query, conn)
-    except Exception as e:
-        print(f"Failed to load data frame: {e}")
-        raise
-
-def save_data_frame_to_db(df, table_name, conn):
-    try:
-        df.to_sql(table_name, conn, if_exists='replace', index=False)
-    except ValueError as ve:
-        print(f"Value error: {ve}")
+        df = pd.read_sql_query(query, conn)
+        logging.debug("Query executed successfully and data loaded into DataFrame.")
+        return df
+    except pd.io.sql.DatabaseError as e:
+        logging.error(f"Pandas Database error occurred: {e}")
         raise
     except Exception as e:
-        print(f"Error saving DataFrame to SQL: {e}")
+        logging.error(f"Unexpected error while executing query: {e}")
         raise
 
+# Example usage
 def main():
-    db_name = 'example.db'
-    conn = connect_to_db(db_name)
-    print("Connected to database.")
+    database_name = "example.db"
+    query = "SELECT * FROM some_table;"
 
-    print("Fetching sample table...")
-    input_query = "SELECT * FROM sample_table"
-    df = load_data_frame(conn, input_query)
+    try:
+        conn = connect_to_database(database_name)
+        data = execute_query(conn, query)
+        logging.debug("Data retrieved from the database:")
+        logging.debug(data)
+    except Exception as e:
+        logging.critical(f"Critical error in main execution: {e}")
+    finally:
+        if 'conn' in locals() and conn:
+            conn.close()
+            logging.debug("Database connection closed.")
 
-    print(df.head())
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
