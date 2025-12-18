@@ -1,7 +1,6 @@
 import streamlit as st
 import sqlite3
 import os
-import json
 from datetime import datetime, date
 import bcrypt
 import pandas as pd
@@ -53,7 +52,7 @@ def init_db():
         estado TEXT,
         nota TEXT,
         data TEXT,
-        motorista TEXT,
+        entregador TEXT,
         empresa_id INTEGER,
         foto BLOB,
         assinatura BLOB
@@ -149,7 +148,7 @@ if not st.session_state.login:
                     pwd = bcrypt.hashpw(np.encode(), bcrypt.gensalt())
                     cur.execute(
                         "INSERT INTO utilizadores (username,password,empresa_id,role) VALUES (?,?,?,?)",
-                        (nu, pwd, empresa_id, "motorista")
+                        (nu, pwd, empresa_id, "entregador")
                     )
                     con.commit()
                     con.close()
@@ -170,10 +169,10 @@ menu = st.sidebar.selectbox(
 # ADMIN
 # ===============================
 if menu == "Administração" and is_admin:
-    st.subheader("Criar Motorista")
-    nu = st.text_input("Novo utilizador", key="admin_new_user")
+    st.subheader("Criar Entregador")
+    nu = st.text_input("Novo entregador", key="admin_new_user")
     np = st.text_input("Password", type="password", key="admin_new_pass")
-    if st.button("Criar Motorista", key="admin_create_button"):
+    if st.button("Criar Entregador", key="admin_create_button"):
         if nu and np:
             nu = nu.strip().lower()
             pwd = bcrypt.hashpw(np.encode(), bcrypt.gensalt())
@@ -181,13 +180,30 @@ if menu == "Administração" and is_admin:
             cur = con.cursor()
             cur.execute(
                 "INSERT OR IGNORE INTO utilizadores (username,password,empresa_id,role) VALUES (?,?,?,?)",
-                (nu, pwd, st.session_state.empresa_id, "motorista")
+                (nu, pwd, st.session_state.empresa_id, "entregador")
             )
             con.commit()
             con.close()
-            st.success("Motorista criado")
+            st.success("Entregador criado")
         else:
             st.error("Preenche todos os campos")
+
+    st.markdown("---")
+    st.subheader("Entregas por Entregador")
+    con = get_db()
+    cur = con.cursor()
+    cur.execute("SELECT username FROM utilizadores WHERE empresa_id=? AND role='entregador'", (st.session_state.empresa_id,))
+    entregadores = [m[0] for m in cur.fetchall()]
+    data = []
+    for e in entregadores:
+        cur.execute("SELECT COUNT(*) FROM entregas WHERE entregador=? AND empresa_id=?", (e, st.session_state.empresa_id))
+        realizadas = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) FROM entregas WHERE entregador=? AND empresa_id=? AND estado!='Fechada'", (e, st.session_state.empresa_id))
+        pendentes = cur.fetchone()[0]
+        data.append({"Entregador": e, "Entregas Realizadas": realizadas, "Entregas Pendentes": pendentes})
+    con.close()
+    df_entregadores = pd.DataFrame(data)
+    st.dataframe(df_entregadores)
 
 # ===============================
 # NOVA ENTREGA
@@ -213,7 +229,7 @@ if menu == "Nova Entrega":
         cur = con.cursor()
         cur.execute("""
         INSERT INTO entregas
-        (cliente,morada,email,estado,nota,data,motorista,empresa_id,foto,assinatura)
+        (cliente,morada,email,estado,nota,data,entregador,empresa_id,foto,assinatura)
         VALUES (?,?,?,?,?,?,?,?,?,?)
         """, (
             cliente,
@@ -231,7 +247,7 @@ if menu == "Nova Entrega":
         con.close()
         st.success("Entrega registada")
 
-        # Envio de email com anexos
+        # Envio de email
         try:
             yag = yagmail.SMTP('YOUR_EMAIL@gmail.com', 'YOUR_APP_PASSWORD')
             subject = f"Entrega Realizada: {cliente}"
@@ -241,7 +257,7 @@ if menu == "Nova Entrega":
             <p>Morada: {morada}</p>
             <p>Estado: {estado}</p>
             <p>Nota: {nota}</p>
-            <p>Motorista: {st.session_state.utilizador}</p>
+            <p>Entregador: {st.session_state.utilizador}</p>
             <p>Data/Hora: {datetime.now().isoformat()}</p>
             """
             attachments = []
@@ -264,7 +280,7 @@ if menu == "Minhas Entregas":
     cur.execute("""
     SELECT id, cliente, morada, estado, nota, data
     FROM entregas
-    WHERE motorista=? AND empresa_id=?
+    WHERE entregador=? AND empresa_id=?
     """, (st.session_state.utilizador, st.session_state.empresa_id))
     dados = cur.fetchall()
     con.close()
@@ -284,19 +300,31 @@ if menu == "Minhas Entregas":
         st.info("Sem entregas registadas")
 
 # ===============================
-# DASHBOARD
+# DASHBOARD COM FILTROS
 # ===============================
 if menu == "Dashboard":
     st.subheader("Dashboard de Entregas")
     con = get_db()
     cur = con.cursor()
-    query = "SELECT id, cliente, morada, estado, nota, motorista, data FROM entregas WHERE empresa_id=?"
-    cur.execute(query, (st.session_state.empresa_id,))
+    cur.execute("SELECT id, cliente, morada, estado, nota, entregador, data FROM entregas WHERE empresa_id=?",
+                (st.session_state.empresa_id,))
     dados = cur.fetchall()
     con.close()
+
     if dados:
-        df = pd.DataFrame(dados, columns=["ID","Cliente","Morada","Estado","Nota","Motorista","Data"])
-        st.dataframe(df)
+        df = pd.DataFrame(dados, columns=["ID","Cliente","Morada","Estado","Nota","Entregador","Data"])
+        st.markdown("**Filtros:**")
+        filtro_entregador = st.selectbox("Entregador", ["Todos"] + df["Entregador"].unique().tolist())
+        filtro_estado = st.selectbox("Estado", ["Todos"] + df["Estado"].unique().tolist())
+        filtro_data = st.date_input("Data", value=None)
+        df_filtro = df.copy()
+        if filtro_entregador != "Todos":
+            df_filtro = df_filtro[df_filtro["Entregador"]==filtro_entregador]
+        if filtro_estado != "Todos":
+            df_filtro = df_filtro[df_filtro["Estado"]==filtro_estado]
+        if filtro_data:
+            df_filtro = df_filtro[df_filtro["Data"].str.startswith(filtro_data.isoformat())]
+        st.dataframe(df_filtro)
     else:
         st.info("Sem entregas registadas")
 
@@ -309,14 +337,14 @@ if menu == "Fechar Dia":
     con = get_db()
     cur = con.cursor()
     cur.execute("""
-    SELECT id, cliente, morada, estado, nota, motorista
+    SELECT id, cliente, morada, estado, nota, entregador
     FROM entregas
     WHERE data LIKE ? AND empresa_id=?
     """, (f"{hoje}%", st.session_state.empresa_id))
     dados = cur.fetchall()
     con.close()
     if dados:
-        df = pd.DataFrame(dados, columns=["ID","Cliente","Morada","Estado","Nota","Motorista"])
+        df = pd.DataFrame(dados, columns=["ID","Cliente","Morada","Estado","Nota","Entregador"])
         st.dataframe(df)
         if st.button("Fechar todas as entregas do dia", key="fechar_dia"):
             con = get_db()
