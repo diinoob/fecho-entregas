@@ -6,10 +6,9 @@ from datetime import datetime, date
 import bcrypt
 import pandas as pd
 from streamlit_drawable_canvas import st_canvas
-import yagmail
 
 # ===============================
-# CONFIGURAÇÃO BASE
+# CONFIGURAÇÃO
 # ===============================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, "entregas.db")
@@ -68,12 +67,13 @@ def init_db():
         success INTEGER
     )""")
 
+    # Empresa demo
     cur.execute("INSERT OR IGNORE INTO empresas (nome) VALUES (?)", ("Empresa Demo",))
     cur.execute("SELECT id FROM empresas WHERE nome=?", ("Empresa Demo",))
     empresa_id = cur.fetchone()[0]
 
+    # Admin demo
     pwd = bcrypt.hashpw("admin".encode(), bcrypt.gensalt())
-
     cur.execute("""
     INSERT OR IGNORE INTO utilizadores
     (username, password, empresa_id, role)
@@ -83,6 +83,7 @@ def init_db():
     con.commit()
     con.close()
 
+# Inicializa DB apenas uma vez
 if not os.path.exists(DB_FLAG):
     init_db()
     open(DB_FLAG, "w").close()
@@ -94,18 +95,22 @@ if "login" not in st.session_state:
     st.session_state.login = False
 
 # ===============================
-# LOGIN / REGISTO
+# UI
 # ===============================
 st.title("📦 Intercourier Entregas")
 
+# ===============================
+# LOGIN / REGISTO
+# ===============================
 if not st.session_state.login:
     tab1, tab2 = st.tabs(["Login", "Registo"])
 
+    # ---------- LOGIN ----------
     with tab1:
-        u = st.text_input("Utilizador")
-        p = st.text_input("Password", type="password")
+        u = st.text_input("Utilizador", key="login_username")
+        p = st.text_input("Password", type="password", key="login_password")
 
-        if st.button("Entrar"):
+        if st.button("Entrar", key="login_button"):
             con = get_db()
             cur = con.cursor()
             cur.execute("SELECT password, empresa_id, role FROM utilizadores WHERE username=?", (u.lower(),))
@@ -132,14 +137,14 @@ if not st.session_state.login:
                 con.close()
                 st.error("Credenciais inválidas")
 
+    # ---------- REGISTO ----------
     with tab2:
-        nu = st.text_input("Novo utilizador")
-        np = st.text_input("Password", type="password")
-        ncp = st.text_input("Confirmar Password", type="password")
+        nu = st.text_input("Novo utilizador", key="register_username")
+        np = st.text_input("Password", type="password", key="register_password")
+        ncp = st.text_input("Confirmar Password", type="password", key="register_confirm")
 
-        if st.button("Registar"):
+        if st.button("Registar", key="register_button"):
             nu = nu.strip().lower()
-
             if not nu:
                 st.error("Username obrigatório")
             elif np != ncp:
@@ -163,17 +168,16 @@ if not st.session_state.login:
                     con.commit()
                     con.close()
                     st.success("Utilizador criado. Faça login.")
-
     st.stop()
 
 # ===============================
 # MENU
 # ===============================
 is_admin = st.session_state.role == "admin"
-
 menu = st.sidebar.selectbox(
     "Menu",
-    ["Nova Entrega", "Fechar Dia", "Administração"] if is_admin else ["Nova Entrega", "Fechar Dia"]
+    ["Nova Entrega", "Fechar Dia", "Administração"] if is_admin else ["Nova Entrega", "Fechar Dia"],
+    key="menu_sidebar"
 )
 
 # ===============================
@@ -181,36 +185,40 @@ menu = st.sidebar.selectbox(
 # ===============================
 if menu == "Administração" and is_admin:
     st.subheader("Criar Motorista")
-    nu = st.text_input("Utilizador")
-    np = st.text_input("Password", type="password")
+    nu = st.text_input("Novo utilizador", key="admin_new_user")
+    np = st.text_input("Password", type="password", key="admin_new_pass")
 
-    if st.button("Criar"):
-        nu = nu.strip().lower()
-        pwd = bcrypt.hashpw(np.encode(), bcrypt.gensalt())
-        con = get_db()
-        cur = con.cursor()
-        cur.execute(
-            "INSERT OR IGNORE INTO utilizadores (username,password,empresa_id,role) VALUES (?,?,?,?)",
-            (nu, pwd, st.session_state.empresa_id, "motorista")
-        )
-        con.commit()
-        con.close()
-        st.success("Motorista criado")
+    if st.button("Criar Motorista", key="admin_create_button"):
+        if nu and np:
+            nu = nu.strip().lower()
+            pwd = bcrypt.hashpw(np.encode(), bcrypt.gensalt())
+            con = get_db()
+            cur = con.cursor()
+            cur.execute(
+                "INSERT OR IGNORE INTO utilizadores (username,password,empresa_id,role) VALUES (?,?,?,?)",
+                (nu, pwd, st.session_state.empresa_id, "motorista")
+            )
+            con.commit()
+            con.close()
+            st.success("Motorista criado")
+        else:
+            st.error("Preenche todos os campos")
 
 # ===============================
 # NOVA ENTREGA
 # ===============================
 if menu == "Nova Entrega":
-    cliente = st.text_input("Cliente")
-    morada = st.text_input("Morada")
-    email_cliente = st.text_input("Email do Cliente")
-    estado = st.selectbox("Estado", ["Entregue", "Não Entregue"])
-    nota = st.text_area("Nota")
+    st.subheader("Nova Entrega")
+    cliente = st.text_input("Cliente", key="entrega_cliente")
+    morada = st.text_input("Morada", key="entrega_morada")
+    email_cliente = st.text_input("Email do Cliente", key="entrega_email")
+    estado = st.selectbox("Estado", ["Entregue", "Não Entregue"], key="entrega_estado")
+    nota = st.text_area("Nota", key="entrega_nota")
 
-    foto = st.camera_input("Foto da entrega")
-    assinatura = st_canvas(height=150, width=300, drawing_mode="freedraw")
+    foto = st.camera_input("Foto da entrega", key="entrega_foto")
+    assinatura = st_canvas(height=150, width=300, drawing_mode="freedraw", key="entrega_assinatura")
 
-    if st.button("Guardar Entrega"):
+    if st.button("Guardar Entrega", key="entrega_save"):
         foto_bytes = foto.getvalue() if foto else None
         assinatura_json = json.dumps(assinatura.json_data) if assinatura and assinatura.json_data else None
 
@@ -240,6 +248,7 @@ if menu == "Nova Entrega":
 # FECHAR DIA
 # ===============================
 if menu == "Fechar Dia":
+    st.subheader("Fechar Dia")
     hoje = date.today().isoformat()
     con = get_db()
     cur = con.cursor()
@@ -255,7 +264,7 @@ if menu == "Fechar Dia":
         df = pd.DataFrame(dados, columns=["Cliente","Morada","Estado","Nota","Motorista"])
         st.dataframe(df)
 
-        if st.button("Exportar Excel"):
+        if st.button("Exportar Excel", key="fechar_export"):
             file_path = os.path.join(BASE_DIR, "relatorio.xlsx")
             df.to_excel(file_path, index=False)
             st.download_button("Download Excel", open(file_path, "rb"), file_name="relatorio.xlsx")
