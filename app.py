@@ -1,6 +1,7 @@
 import sqlite3
 import pandas as pd
 import logging
+import streamlit as st
 
 # Configure logging at the DEBUG level
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -30,22 +31,29 @@ def execute_query(conn, query):
         logging.error(f"Unexpected error while executing query: {e}")
         raise
 
-# Example usage
+# Streamlit application
 def main():
-    database_name = "example.db"
-    query = "SELECT * FROM some_table;"
+    st.title("Database Viewer")
+    st.sidebar.header("Configuration")
 
-    try:
-        conn = connect_to_database(database_name)
-        data = execute_query(conn, query)
-        logging.debug("Data retrieved from the database:")
-        logging.debug(data)
-    except Exception as e:
-        logging.critical(f"Critical error in main execution: {e}")
-    finally:
-        if 'conn' in locals() and conn:
-            conn.close()
-            logging.debug("Database connection closed.")
+    database_name = st.sidebar.text_input("Database Name", value="example.db")
+    query = st.sidebar.text_area("SQL Query", value="SELECT * FROM some_table;")
+
+    if st.sidebar.button("Run Query"):
+        try:
+            conn = connect_to_database(database_name)
+            data = execute_query(conn, query)
+            st.subheader("Query Results")
+            st.dataframe(data)
+            logging.debug("Data retrieved from the database:")
+            logging.debug(data)
+        except Exception as e:
+            st.error(f"An error occurred: {e}")
+            logging.critical(f"Critical error in main execution: {e}")
+        finally:
+            if 'conn' in locals() and conn:
+                conn.close()
+                logging.debug("Database connection closed.")
 
 if __name__ == "__main__":
     main()
