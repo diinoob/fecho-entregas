@@ -37,7 +37,7 @@ def init_db():
         data TEXT,
         motorista TEXT,
         empresa_id INTEGER,
-        foto TEXT,
+        foto BLOB,
         assinatura TEXT,
         email TEXT)""")
 
@@ -47,17 +47,19 @@ def init_db():
         timestamp TEXT,
         success INTEGER)""")
 
-    cur.execute("INSERT OR IGNORE INTO empresas (nome) VALUES ('Empresa Demo')")
-    cur.execute("SELECT id FROM empresas WHERE nome='Empresa Demo'")
+    cur.execute("INSERT OR IGNORE INTO empresas (nome) VALUES (?)", ("Empresa Demo",))
+    cur.execute("SELECT id FROM empresas WHERE nome=?", ("Empresa Demo",))
     empresa_id = cur.fetchone()[0]
 
     pwd = bcrypt.hashpw("admin".encode(), bcrypt.gensalt())
 
     cur.execute("""INSERT OR IGNORE INTO utilizadores
         (username, password, empresa_id, role)
-        VALUES (?, ?, ?, ?)""", ("admin", pwd, empresa_id, "admin"))
+        VALUES (?, ?, ?, ?)""",
+        ("admin", pwd, empresa_id, "admin"))
 
     con.commit()
+    con.close()
 
 init_db()
 
