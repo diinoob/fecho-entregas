@@ -1,137 +1,92 @@
 import streamlit as st
-import sqlite3
-from datetime import date
-from reportlab.pdfgen import canvas
-import bcrypt
 import pandas as pd
-from PIL import Image
-from streamlit_drawable_canvas import st_canvas
+import datetime
+import smtplib
+from email.message import EmailMessage
+import json
+import os
 
-DB = "entregas.db"
+USERS_FILE = "users.json"
+DATA_FILE = "entregas.csv"
 
-def db():
-    return sqlite3.connect(DB, check_same_thread=False)
+def load_users():
+    if not os.path.exists(USERS_FILE):
+        with open(USERS_FILE, "w") as f:
+            json.dump({}, f)
+    with open(USERS_FILE, "r") as f:
+        return json.load(f)
 
-def init_db():
-    con = db()
-    cur = con.cursor()
+def save_users(users):
+    with open(USERS_FILE, "w") as f:
+        json.dump(users, f)
 
-    cur.execute("""CREATE TABLE IF NOT EXISTS empresas (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        nome TEXT UNIQUE)""")
+def register_user(username, password):
+    users = load_users()
+    if username in users:
+        return False
+    users[username] = password
+    save_users(users)
+    return True
 
-    cur.execute("""CREATE TABLE IF NOT EXISTS utilizadores (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        username TEXT UNIQUE,
-        password BLOB,
-        empresa_id INTEGER,
-        role TEXT)""")
+def authenticate(username, password):
+    users = load_users()
+    return users.get(username) == password
 
-    cur.execute("""CREATE TABLE IF NOT EXISTS entregas (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        cliente TEXT,
-        morada TEXT,
-        estado TEXT,
-        nota TEXT,
-        data TEXT,
-        motorista TEXT,
-        empresa_id INTEGER,
-        foto TEXT,
-        assinatura TEXT)""")
+def send_email(report):
+    msg = EmailMessage()
+    msg.set_content(report)
+    msg['Subject'] = 'Fecho Diário de Entregas'
+    msg['From'] = 'teuemail@gmail.com'
+    msg['To'] = 'destino@gmail.com'
 
-    cur.execute("INSERT OR IGNORE INTO empresas (nome) VALUES ('Empresa Demo')")
-    cur.execute("SELECT id FROM empresas WHERE nome='Empresa Demo'")
-    empresa_id = cur.fetchone()[0]
+    with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp:
+        smtp.login('teuemail@gmail.com', 'TUA_PASSWORD')
+        smtp.send_message(msg)
 
-    pwd = bcrypt.hashpw("admin".encode(), bcrypt.gensalt())
+st.title("App de Entregas – Transitários")
 
-    cur.execute("""INSERT OR IGNORE INTO utilizadores
-        (username, password, empresa_id, role)
-        VALUES (?, ?, ?, ?)""", ("admin", pwd, empresa_id, "admin"))
+menu = st.sidebar.selectbox("Menu", ["Login", "Registo"])
 
-    con.commit()
-
-init_db()
-
-st.title("📦 Fecho Diário de Entregas")
-
-
-if "login" not in st.session_state:
-    st.session_state.login = False
-
-if not st.session_state.login:
-    u = st.text_input("Utilizador")
-    p = st.text_input("Password", type="password")
-
-    if st.button("Entrar"):
-        con = db()
-        cur = con.cursor()
-        cur.execute("SELECT password, empresa_id, role FROM utilizadores WHERE username=?", (u,))
-        user = cur.fetchone()
-
-        if user and bcrypt.checkpw(p.encode(), user[0]):
-            st.session_state.login = True
-            st.session_state.utilizador = u
-            st.session_state.empresa_id = user[1]
-            st.session_state.role = user[2]
-            st.experimental_rerun()
+if menu == "Registo":
+    st.subheader("Registo de Novo Entregador")
+    new_user = st.text_input("Novo utilizador")
+    new_pass = st.text_input("Password", type="password")
+    if st.button("Registar"):
+        if register_user(new_user, new_pass):
+            st.success("Utilizador criado com sucesso")
         else:
-            st.error("Login inválido")
-    st.stop()
+            st.error("Utilizador já existe")
 
-is_admin = st.session_state.role == "admin"
+if menu == "Login":
+    user = st.text_input("Utilizador")
+    password = st.text_input("Password", type="password")
+    if st.button("Entrar"):
+        if authenticate(user, password):
+            st.session_state["user"] = user
+            st.success("Login efetuado")
+        else:
+            st.error("Credenciais inválidas")
 
-menu = st.sidebar.selectbox(
-    "Menu",
-    ["Nova Entrega", "Fechar Dia", "Administração"] if is_admin else ["Nova Entrega", "Fechar Dia"]
-)
-
-if menu == "Administração" and is_admin:
-    st.subheader("Criar Motorista")
-    nu = st.text_input("Novo utilizador")
-    np = st.text_input("Password", type="password")
-
-    if st.button("Criar Motorista"):
-        pwd = bcrypt.hashpw(np.encode(), bcrypt.gensalt())
-        con = db()
-        cur = con.cursor()
-        cur.execute("INSERT INTO utilizadores (username,password,empresa_id,role) VALUES (?,?,?,?)",
-                    (nu, pwd, st.session_state.empresa_id, "motorista"))
-        con.commit()
-        st.success("Motorista criado")
-
-
-if menu == "Nova Entrega":
+if "user" in st.session_state:
+    st.subheader(f"Bem-vindo {st.session_state['user']}")
     cliente = st.text_input("Cliente")
     morada = st.text_input("Morada")
-    estado = st.selectbox("Estado", ["Entregue", "Não Entregue"])
-    nota = st.text_area("Nota")
-
-    foto = st.camera_input("Foto da entrega")
-    assinatura = st_canvas(height=150, width=300, drawing_mode="freedraw")
+    estado = st.selectbox("Estado", ["Entregue", "Falhou"])
 
     if st.button("Guardar Entrega"):
-        con = db()
-        cur = con.cursor()
-        cur.execute("""INSERT INTO entregas
-            (cliente,morada,estado,nota,data,motorista,empresa_id)
-            VALUES (?,?,?,?,?,?,?)""", (
-            cliente, morada, estado, nota,
-            str(date.today()), st.session_state.utilizador, st.session_state.empresa_id
-        ))
-        con.commit()
-        st.success("Entrega guardada")
+        now = datetime.datetime.now()
+        row = pd.DataFrame([[st.session_state['user'], cliente, morada, estado, now]],
+                           columns=["Entregador","Cliente","Morada","Estado","Hora"])
+        if os.path.exists(DATA_FILE):
+            row.to_csv(DATA_FILE, mode='a', header=False, index=False)
+        else:
+            row.to_csv(DATA_FILE, index=False)
+        st.success("Entrega registada")
 
+    if st.button("Fechar Dia"):
+        df = pd.read_csv(DATA_FILE)
+        report = df.to_string()
+        send_email(report)
+        st.success("Relatório enviado por email")
 
-if menu == "Fechar Dia":
-    hoje = str(date.today())
-    con = db()
-    cur = con.cursor()
-    cur.execute("SELECT cliente,morada,estado,nota,motorista FROM entregas WHERE data=? AND empresa_id=?",
-                (hoje, st.session_state.empresa_id))
-    dados = cur.fetchall()
-
-    if st.button("Exportar Excel"):
-        df = pd.DataFrame(dados, columns=["Cliente","Morada","Estado","Nota","Motorista"])
-        df.to_excel("relatorio.xlsx", index=False)
         st.download_button("Download Excel", open("relatorio.xlsx","rb"), file_name="relatorio.xlsx")
