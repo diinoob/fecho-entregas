@@ -1,8 +1,6 @@
-streamlit==1.28.0
-pandas==2.1.0
-bcrypt==4.1.0
-Pillow==10.0.0
-streamlit-drawable-canvas==0.11.0
-openpyxl==3.1.2
-
-
+streamlit
+pandas
+bcrypt
+Pillow
+streamlit-drawable-canvas
+openpyxl
