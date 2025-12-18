@@ -6,6 +6,7 @@ from datetime import datetime, date
 import bcrypt
 import pandas as pd
 from streamlit_drawable_canvas import st_canvas
+import yagmail
 
 # ===============================
 # CONFIGURAÇÃO
@@ -14,7 +15,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, "entregas.db")
 DB_FLAG = os.path.join(BASE_DIR, "db_initialized.flag")
 
-st.set_page_config(page_title="Intercourier Entregas", layout="centered")
+st.set_page_config(page_title="Intercourier Entregas", layout="wide")
 
 # ===============================
 # DATABASE
@@ -29,14 +30,12 @@ def init_db():
     con = get_db()
     cur = con.cursor()
 
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS empresas (
+    cur.execute("""CREATE TABLE IF NOT EXISTS empresas (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         nome TEXT UNIQUE
     )""")
 
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS utilizadores (
+    cur.execute("""CREATE TABLE IF NOT EXISTS utilizadores (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         username TEXT UNIQUE,
         password BLOB,
@@ -44,8 +43,7 @@ def init_db():
         role TEXT
     )""")
 
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS entregas (
+    cur.execute("""CREATE TABLE IF NOT EXISTS entregas (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         cliente TEXT,
         morada TEXT,
@@ -59,8 +57,7 @@ def init_db():
         assinatura TEXT
     )""")
 
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS login_logs (
+    cur.execute("""CREATE TABLE IF NOT EXISTS login_logs (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         username TEXT,
         timestamp TEXT,
@@ -72,13 +69,11 @@ def init_db():
     cur.execute("SELECT id FROM empresas WHERE nome=?", ("Empresa Demo",))
     empresa_id = cur.fetchone()[0]
 
-    # Admin demo
-    pwd = bcrypt.hashpw("admin".encode(), bcrypt.gensalt())
-    cur.execute("""
-    INSERT OR IGNORE INTO utilizadores
-    (username, password, empresa_id, role)
-    VALUES (?, ?, ?, ?)
-    """, ("admin", pwd, empresa_id, "admin"))
+    # Admin default
+    pwd = bcrypt.hashpw("Interadmin".encode(), bcrypt.gensalt())
+    cur.execute("""INSERT OR IGNORE INTO utilizadores
+        (username, password, empresa_id, role)
+        VALUES (?, ?, ?, ?)""", ("interadmin00", pwd, empresa_id, "admin"))
 
     con.commit()
     con.close()
@@ -93,11 +88,6 @@ if not os.path.exists(DB_FLAG):
 # ===============================
 if "login" not in st.session_state:
     st.session_state.login = False
-
-# ===============================
-# UI
-# ===============================
-st.title("📦 Intercourier Entregas")
 
 # ===============================
 # LOGIN / REGISTO
@@ -115,7 +105,6 @@ if not st.session_state.login:
             cur = con.cursor()
             cur.execute("SELECT password, empresa_id, role FROM utilizadores WHERE username=?", (u.lower(),))
             user = cur.fetchone()
-
             if user and bcrypt.checkpw(p.encode(), user[0]):
                 cur.execute(
                     "INSERT INTO login_logs (username, timestamp, success) VALUES (?, ?, 1)",
@@ -176,7 +165,7 @@ if not st.session_state.login:
 is_admin = st.session_state.role == "admin"
 menu = st.sidebar.selectbox(
     "Menu",
-    ["Nova Entrega", "Fechar Dia", "Administração"] if is_admin else ["Nova Entrega", "Fechar Dia"],
+    ["Nova Entrega","Minhas Entregas","Dashboard","Fechar Dia","Administração"] if is_admin else ["Nova Entrega","Minhas Entregas","Dashboard","Fechar Dia"],
     key="menu_sidebar"
 )
 
@@ -244,6 +233,75 @@ if menu == "Nova Entrega":
         con.close()
         st.success("Entrega registada")
 
+        # ENVIO EMAIL
+        try:
+            yag = yagmail.SMTP('YOUR_EMAIL@gmail.com', 'YOUR_APP_PASSWORD')
+            subject = f"Entrega Realizada para {cliente}"
+            body = f"""
+            <h2>Entrega Realizada</h2>
+            <p>Cliente: {cliente}</p>
+            <p>Morada: {morada}</p>
+            <p>Estado: {estado}</p>
+            <p>Nota: {nota}</p>
+            <p>Motorista: {st.session_state.utilizador}</p>
+            <p>Data/Hora: {datetime.now().isoformat()}</p>
+            """
+            yag.send(to=email_cliente, subject=subject, contents=body)
+            st.info("Email enviado ao cliente")
+        except:
+            st.warning("Falha ao enviar email. Configura as credenciais.")
+
+# ===============================
+# MINHAS ENTREGAS
+# ===============================
+if menu == "Minhas Entregas":
+    st.subheader("Minhas Entregas")
+    con = get_db()
+    cur = con.cursor()
+    cur.execute("""
+    SELECT id, cliente, morada, estado, nota, data
+    FROM entregas
+    WHERE motorista=? AND empresa_id=?
+    """, (st.session_state.utilizador, st.session_state.empresa_id))
+    dados = cur.fetchall()
+    con.close()
+
+    if dados:
+        df = pd.DataFrame(dados, columns=["ID","Cliente","Morada","Estado","Nota","Data"])
+        st.dataframe(df)
+
+        if st.button("Fechar Todas as Entregas", key="fechar_minhas"):
+            con = get_db()
+            cur = con.cursor()
+            for row in dados:
+                cur.execute("UPDATE entregas SET estado='Fechada' WHERE id=?", (row[0],))
+            con.commit()
+            con.close()
+            st.success("Todas as suas entregas foram fechadas")
+            st.experimental_rerun()
+    else:
+        st.info("Sem entregas registadas")
+
+# ===============================
+# DASHBOARD
+# ===============================
+if menu == "Dashboard":
+    st.subheader("Dashboard de Entregas")
+    con = get_db()
+    cur = con.cursor()
+    cur.execute("""
+    SELECT id, cliente, morada, estado, nota, motorista, data
+    FROM entregas
+    WHERE empresa_id=?
+    """, (st.session_state.empresa_id,))
+    dados = cur.fetchall()
+    con.close()
+    if dados:
+        df = pd.DataFrame(dados, columns=["ID","Cliente","Morada","Estado","Nota","Motorista","Data"])
+        st.dataframe(df)
+    else:
+        st.info("Sem entregas registadas")
+
 # ===============================
 # FECHAR DIA
 # ===============================
@@ -253,7 +311,7 @@ if menu == "Fechar Dia":
     con = get_db()
     cur = con.cursor()
     cur.execute("""
-    SELECT cliente,morada,estado,nota,motorista
+    SELECT id, cliente, morada, estado, nota, motorista
     FROM entregas
     WHERE data LIKE ? AND empresa_id=?
     """, (f"{hoje}%", st.session_state.empresa_id))
@@ -261,12 +319,22 @@ if menu == "Fechar Dia":
     con.close()
 
     if dados:
-        df = pd.DataFrame(dados, columns=["Cliente","Morada","Estado","Nota","Motorista"])
+        df = pd.DataFrame(dados, columns=["ID","Cliente","Morada","Estado","Nota","Motorista"])
         st.dataframe(df)
 
-        if st.button("Exportar Excel", key="fechar_export"):
+        if st.button("Fechar todas as entregas do dia", key="fechar_dia"):
+            con = get_db()
+            cur = con.cursor()
+            for row in dados:
+                cur.execute("UPDATE entregas SET estado='Fechada' WHERE id=?", (row[0],))
+            con.commit()
+            con.close()
+            st.success("Todas as entregas do dia foram fechadas")
+            st.experimental_rerun()
+
+        if st.button("Exportar Excel", key="export_excel"):
             file_path = os.path.join(BASE_DIR, "relatorio.xlsx")
             df.to_excel(file_path, index=False)
-            st.download_button("Download Excel", open(file_path, "rb"), file_name="relatorio.xlsx")
+            st.download_button("Download Excel", open(file_path,"rb"), file_name="relatorio.xlsx")
     else:
         st.info("Sem entregas hoje")
