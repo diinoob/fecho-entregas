@@ -1,9 +1,7 @@
 streamlit
 pandas
 bcrypt
-reportlab
 Pillow
 streamlit-drawable-canvas
-yagmail
 openpyxl
 
