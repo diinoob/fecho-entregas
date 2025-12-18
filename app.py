@@ -1,20 +1,15 @@
 import streamlit as st
 
-# Updated Streamlit app with unique keys for all widgets
+# Streamlit app
 def main():
-    # Ensure each widget has a unique key to prevent duplication errors
     st.title("Professional Delivery App")
 
-    name = st.text_input("Enter your name", key="name_input")
-    age = st.number_input("Enter your age", min_value=0, max_value=100, key="age_input")
-    address = st.text_area("Enter your address", key="address_input")
+    # Ensuring unique keys for inputs to avoid StreamlitDuplicateElementId issues
+    user_name = st.text_input("Enter your username", key="text_input_username")
+    user_password = st.text_input("Enter your password", type="password", key="text_input_password")
 
-    submit_button = st.button("Submit", key="submit_button")
-
-    if submit_button:
-        st.write(f"Name: {name}")
-        st.write(f"Age: {age}")
-        st.write(f"Address: {address}")
+    if st.button("Login", key="login_button"):
+        st.write(f"Welcome {user_name}!")
 
 if __name__ == "__main__":
     main()
