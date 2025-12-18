@@ -4,4 +4,4 @@ bcrypt
 Pillow
 streamlit-drawable-canvas
 openpyxl
-
+yagmail
