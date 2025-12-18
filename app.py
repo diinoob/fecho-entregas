@@ -86,7 +86,7 @@ if not st.session_state.login:
                 st.session_state.utilizador = u
                 st.session_state.empresa_id = user[1]
                 st.session_state.role = user[2]
-                st.experimental_rerun()
+                st.rerun()
             else:
                 cur.execute("INSERT INTO login_logs (username, timestamp, success) VALUES (?, ?, 0)", (u, str(datetime.now())))
                 st.error("Login inválido")
