@@ -26,7 +26,7 @@ def get_db():
 def init_db():
     con = get_db()
     cur = con.cursor()
-    # Tabelas
+    # Criação de tabelas
     cur.execute("""CREATE TABLE IF NOT EXISTS empresas (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         nome TEXT UNIQUE
@@ -37,7 +37,7 @@ def init_db():
         password BLOB,
         empresa_id INTEGER,
         role TEXT,
-        telefone TEXT
+        telefone TEXT DEFAULT ''
     )""")
     cur.execute("""CREATE TABLE IF NOT EXISTS entregas (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -59,17 +59,22 @@ def init_db():
         timestamp TEXT,
         success INTEGER
     )""")
+    
     # Empresa demo
     cur.execute("INSERT OR IGNORE INTO empresas (nome) VALUES (?)", ("Empresa Demo",))
     cur.execute("SELECT id FROM empresas WHERE nome=?", ("Empresa Demo",))
     empresa_id = cur.fetchone()[0]
-    # Admin padrão
-    pwd = bcrypt.hashpw("Interadmin".encode(), bcrypt.gensalt())
-    cur.execute("""INSERT OR IGNORE INTO utilizadores
-        (username, password, empresa_id, role, telefone)
-        VALUES (?, ?, ?, ?, ?)""", ("interadmin00", pwd, empresa_id, "admin", ""))
+    
+    # Admin padrão só se não existir
+    cur.execute("SELECT id FROM utilizadores WHERE username='interadmin00'")
+    if cur.fetchone() is None:
+        pwd = bcrypt.hashpw("Interadmin".encode(), bcrypt.gensalt())
+        cur.execute("""INSERT INTO utilizadores (username, password, empresa_id, role, telefone)
+                       VALUES (?, ?, ?, ?, ?)""", ("interadmin00", pwd, empresa_id, "admin", ""))
+    
     con.commit()
     con.close()
+
 
 init_db()
 
