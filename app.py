@@ -3,6 +3,8 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime, date
 import bcrypt
+import tempfile
+import os
 
 # Configuração da página
 st.set_page_config(
@@ -27,9 +29,11 @@ if 'deliveries' not in st.session_state:
 
 # Função de autenticação simples
 def authenticate(username, password):
-    # Credenciais demo (em produção, usar banco de dados)
+    # NOTA: Credenciais hardcoded apenas para demonstração
+    # Em produção, usar variáveis de ambiente ou banco de dados seguro
+    # Exemplo: users = {os.getenv('ADMIN_USER'): os.getenv('ADMIN_PASS_HASH')}
     users = {
-        'admin': bcrypt.hashpw('admin123'.encode('utf-8'), bcrypt.gensalt())
+        'admin': b'$2b$12$.tpibrLtThMhgtwxvVWgQ.ZuB8Ts.M7Pmcrh2eCWGRI7ZhWBmKe7u'  # senha: admin123
     }
     
     if username in users:
@@ -187,7 +191,12 @@ def show_manage_deliveries():
     
     col1, col2, col3 = st.columns(3)
     with col1:
-        delivery_id = st.number_input("ID da Entrega", min_value=1, max_value=len(st.session_state.deliveries), step=1, key=unique_key())
+        # Usar o máximo ID real do DataFrame, não o comprimento
+        if not st.session_state.deliveries.empty:
+            max_delivery_id = int(st.session_state.deliveries['ID'].max())
+        else:
+            max_delivery_id = 1
+        delivery_id = st.number_input("ID da Entrega", min_value=1, max_value=max_delivery_id, step=1, key=unique_key())
     with col2:
         new_status = st.selectbox("Novo Status", ["Pendente", "Em Andamento", "Concluída", "Cancelada"], key=unique_key())
     with col3:
@@ -210,18 +219,25 @@ def show_reports():
     
     # Exportar para Excel
     if st.button("Exportar para Excel", key=unique_key()):
-        # Criar arquivo Excel
-        output_file = f"/tmp/entregas_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+        # Criar arquivo Excel usando tempfile para compatibilidade cross-platform
+        temp_dir = tempfile.gettempdir()
+        output_file = os.path.join(temp_dir, f"entregas_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx")
         st.session_state.deliveries.to_excel(output_file, index=False)
         
-        with open(output_file, 'rb') as f:
-            st.download_button(
-                label="📥 Download Excel",
-                data=f,
-                file_name=f"entregas_{datetime.now().strftime('%Y%m%d')}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                key=unique_key()
-            )
+        try:
+            with open(output_file, 'rb') as f:
+                file_data = f.read()
+                st.download_button(
+                    label="📥 Download Excel",
+                    data=file_data,
+                    file_name=f"entregas_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key=unique_key()
+                )
+        finally:
+            # Limpar arquivo temporário
+            if os.path.exists(output_file):
+                os.remove(output_file)
     
     st.markdown("---")
     st.subheader("Visualização dos Dados")
